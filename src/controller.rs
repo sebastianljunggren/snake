@@ -21,7 +21,10 @@ pub fn init(
     thread::spawn(move || {
         await_start(&control_rx);
         let game = model::Game::new(width, height);
-        run(game, step_tx, control_rx);
+        match run(game, step_tx, control_rx) {
+            Err(err) => println!("{}", err),
+            _ => (),
+        }
     });
     (control_tx, step_rx)
 }
@@ -39,17 +42,12 @@ fn run(
     mut game: model::Game,
     step_tx: mpsc::Sender<model::GameStep>,
     control_rx: mpsc::Receiver<GameControl>,
-) {
+) -> Result<(), mpsc::SendError<model::GameStep>> {
     let step_length = time::Duration::from_millis(STEP_MILLIS);
     let sleep_length = time::Duration::from_millis(SLEEP_MILLIS);
     let mut last_step = time::SystemTime::now();
     let mut active_direction = model::Direction::Up;
-    if step_tx
-        .send(model::GameStep::Continue(game.board()))
-        .is_err()
-    {
-        return;
-    }
+    step_tx.send(model::GameStep::Continue(game.board()))?;
     loop {
         for control_message in control_rx.try_iter() {
             match control_message {
@@ -60,8 +58,10 @@ fn run(
         let now = time::SystemTime::now();
         if now - step_length >= last_step {
             let step = game.step(active_direction);
-            if step == model::GameStep::Lose || step_tx.send(step).is_err() {
-                break;
+            let end_game = step == model::GameStep::Lose;
+            step_tx.send(step)?;
+            if end_game {
+                return Ok(());
             }
             last_step = last_step + step_length;
         }
